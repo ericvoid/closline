@@ -20,7 +20,9 @@
 #OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 #THE SOFTWARE.
 
-from httplib import HTTPConnection
+import json
+
+from httplib import HTTPSConnection
 from urllib import urlencode
 from sys import argv
 from sys import exit
@@ -72,55 +74,60 @@ else:
 file_path = argv.pop()
 input_js = open(file_path).read()    
 comp_name = file_path[:len(file_path)-3] + ".min.js"
-out_file = open(comp_name, 'w')
+
+params = [
+    ('js_code', input_js),
+    ('compilation_level', optimize_level),
+    ('output_format', 'json'),
+    ('output_info', 'compiled_code'),
+    ('output_info', 'statistics'),
+    ('output_info', 'errors'),
+]
 
 if options.pprint:
     # define the POST parameters with pretty print
-    params = urlencode([
-        ('js_code', input_js),
-        ('compilation_level', optimize_level),
-        ('output_format', 'text'),
-        ('formatting', 'pretty_print'),
-        ('output_info', 'compiled_code'),
-    ])
-else:
-    # define the POST parameters without pretty print
-    params = urlencode([
-        ('js_code', input_js),
-        ('compilation_level', optimize_level),
-        ('output_format', 'text'),
-        ('output_info', 'compiled_code'),
-    ])
-
-# define a second post request for compilation data
-stat_params = urlencode([
-    ('js_code', input_js),
-    ('compilation_level', optimize_level),
-    ('output_format', 'text'),
-    ('output_info', 'statistics'),
-])
+    params.append(('formatting', 'pretty_print'))
 
 # prepare the connection
 headers = { "Content-type": "application/x-www-form-urlencoded" }
-connect = HTTPConnection('closure-compiler.appspot.com')
+connect = HTTPSConnection('closure-compiler.appspot.com')
 
 # make the HTTP request for compiled code
-connect.request('POST', '/compile', params, headers)
-output = connect.getresponse().read()
+connect.request('POST', '/compile', urlencode(params), headers)
+compile_response = connect.getresponse()
 
-# make the HTTP request for compilation statistics
-connect.request('POST', '/compile', stat_params, headers)
-stats = connect.getresponse().read()
-print stats
+if compile_response.status != 200:
+    print 'unexpected API response'
+    print 'status:', compile_response.status
+    print 'reason:', compile_response.reason
+    print 'msg:', compile_response.msg
+    exit(1)
+
+response_data = compile_response.read()
 
 # close the connection
 connect.close()
 
-if len(output) == 1:
-    print "Code compiled to nothing! There may be an error."
+if not response_data:
+    print 'unexpected API response'
+    print 'empty response'
+    exit(1)
+
+output = json.loads(response_data)
+
+if "errors" in output:
+    for entry in output["errors"]:
+        print u"error: {}".format(entry["error"])
+        print entry["line"]
+        print '(line:{} col:{})'.format(entry["lineno"], entry["charno"])
+        print
+
+    print "Failed."
+    exit(1)
+
 else:
+    with open(comp_name, 'w') as out_file:
+        out_file.write(output['compiledCode'])
+        out_file.close()
+
     print "Complete."
-
-
-out_file.write(output)
-out_file.close()
